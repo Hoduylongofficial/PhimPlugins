@@ -131,7 +131,7 @@ class OPhimProvider : MainAPI() {
         }
     }
 
-    private fun MovieItem.toSearchResponse(): SearchResponse {
+        private fun MovieItem.toSearchResponse(): SearchResponse {
         val posterFull = when {
             posterUrl?.startsWith("http") == true -> posterUrl
             posterUrl != null -> "$mainUrl$posterUrl"
@@ -139,8 +139,8 @@ class OPhimProvider : MainAPI() {
         }
         return newMovieSearchResponse(
             name = name,
-            url  = "$mainUrl/phim/$slug",
+            url  = "$mainUrl/api/v1/movie/$slug",   // ← sửa dòng này
             type = if (type == "single") TvType.Movie else TvType.TvSeries
         ) { posterUrl = posterFull }
     }
-}
+
