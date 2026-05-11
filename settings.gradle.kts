@@ -2,10 +2,6 @@ rootProject.name = "PhimPlugins"
 
 // This file sets what projects are included.
 // All new projects should get automatically included unless specified in the "disabled" variable.
-// Đăng ký từng provider
-include(":OPhimProvider")
-include(":KKPhimProvider")
-include(":NguonCProvider")
 
 val disabled = listOf<String>()
 
