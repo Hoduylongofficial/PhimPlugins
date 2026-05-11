@@ -58,6 +58,13 @@ class OPhimProvider : MainAPI() {
         @JsonProperty("link_m3u8")  val linkM3u8: String
     )
 
+    private fun MovieItem.toSearchResponse(): SearchResponse {
+        val url = "$mainUrl/api/v1/movie/$slug"
+        return newMovieSearchResponse(name, url, TvType.Movie) {
+            this.posterUrl = this@toSearchResponse.posterUrl ?: thumbUrl
+        }
+    }
+
     override val mainPage = mainPageOf(
         "$mainUrl/api/v1/movie?sort_field=_id&sort_type=desc&page=" to "🆕 Phim Mới",
         "$mainUrl/api/v1/movie?type=single&page="                   to "🎬 Phim Lẻ",
@@ -72,8 +79,9 @@ class OPhimProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val data = parseJson<ListResponse>(
-            app.get("$mainUrl/api/v1/movie?keyword=${query.encodeUrl()}").text
+            app.get("$mainUrl/api/v1/movie?keyword=$encoded").text
         )
         return data.items.map { it.toSearchResponse() }
     }
@@ -88,59 +96,48 @@ class OPhimProvider : MainAPI() {
                 ?.firstOrNull()?.serverData?.firstOrNull()
                 ?.let { it.linkM3u8.ifEmpty { null } ?: it.linkEmbed } ?: ""
             return newMovieLoadResponse(movie.name, url, TvType.Movie, link) {
-                posterUrl   = movie.posterUrl ?: movie.thumbUrl
-                plot        = movie.content?.stripHtml()
-                year        = movie.year
-                tags        = movie.category?.map { it.name }
+                posterUrl = movie.posterUrl ?: movie.thumbUrl
+                plot      = movie.content?.replace(Regex("<[^>]*>"), "")
+                year      = movie.year
+                tags      = movie.category?.map { it.name }
                 this.actors = actors
             }
-        }
-
-        val episodes = data.episodes?.flatMap { server ->
-            server.serverData.mapIndexed { idx, ep ->
-                Episode(
-                    data        = ep.linkM3u8.ifEmpty { ep.linkEmbed },
-                    name        = "Tập ${ep.name}",
-                    episode     = ep.name.toIntOrNull() ?: (idx + 1),
-                    description = server.serverName
-                )
+        } else {
+            val episodes = data.episodes?.flatMap { server ->
+                server.serverData.mapIndexed { idx, ep ->
+                    newEpisode(ep.linkM3u8.ifEmpty { ep.linkEmbed }) {
+                        name    = ep.name
+                        episode = idx + 1
+                    }
+                }
+            } ?: emptyList()
+            return newTvSeriesLoadResponse(movie.name, url, TvType.TvSeries, episodes) {
+                posterUrl = movie.posterUrl ?: movie.thumbUrl
+                plot      = movie.content?.replace(Regex("<[^>]*>"), "")
+                year      = movie.year
+                tags      = movie.category?.map { it.name }
+                this.actors = actors
             }
-        } ?: emptyList()
-
-        return newTvSeriesLoadResponse(movie.name, url, TvType.TvSeries, episodes) {
-            posterUrl   = movie.posterUrl ?: movie.thumbUrl
-            plot        = movie.content?.stripHtml()
-            year        = movie.year
-            tags        = movie.category?.map { it.name }
-            this.actors = actors
         }
     }
 
     override suspend fun loadLinks(
-        data: String, isCasting: Boolean,
+        data: String,
+        isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        if (data.isBlank()) return false
-        return if (data.contains(".m3u8")) {
-            callback(ExtractorLink(name, "$name HLS", data, mainUrl, Qualities.Unknown.value, true))
-            true
+        if (data.contains(".m3u8")) {
+            callback(
+                newExtractorLink(name, name, data) {
+                    this.referer = mainUrl
+                    this.quality = Qualities.Unknown.value
+                    this.isM3u8  = true
+                }
+            )
         } else {
             loadExtractor(data, mainUrl, subtitleCallback, callback)
-            true
         }
+        return true
     }
-
-        private fun MovieItem.toSearchResponse(): SearchResponse {
-        val posterFull = when {
-            posterUrl?.startsWith("http") == true -> posterUrl
-            posterUrl != null -> "$mainUrl$posterUrl"
-            else -> null
-        }
-        return newMovieSearchResponse(
-            name = name,
-            url  = "$mainUrl/api/v1/movie/$slug",   // ← sửa dòng này
-            type = if (type == "single") TvType.Movie else TvType.TvSeries
-        ) { posterUrl = posterFull }
-    }
-
+}
