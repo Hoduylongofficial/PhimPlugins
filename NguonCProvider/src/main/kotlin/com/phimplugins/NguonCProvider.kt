@@ -63,6 +63,13 @@ class NguonCProvider : MainAPI() {
         @JsonProperty("m3u8")  val m3u8: String?
     )
 
+    private fun MovieItem.toSearchResponse(): SearchResponse {
+        val url = "$mainUrl/api/film/$slug"
+        return newMovieSearchResponse(name, url, TvType.Movie) {
+            this.posterUrl = this@toSearchResponse.posterUrl ?: thumbUrl
+        }
+    }
+
     override val mainPage = mainPageOf(
         "$mainUrl/api/films/phim-moi-cap-nhat?page="   to "🆕 Mới Cập Nhật",
         "$mainUrl/api/films/danh-sach/phim-le?page="   to "🎬 Phim Lẻ",
@@ -82,8 +89,9 @@ class NguonCProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val data = parseJson<ListResponse>(
-            app.get("$mainUrl/api/films/search?keyword=${query.encodeUrl()}").text
+            app.get("$mainUrl/api/films/search?keyword=$encoded").text
         )
         return data.items.map { it.toSearchResponse() }
     }
@@ -91,72 +99,58 @@ class NguonCProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val data  = parseJson<DetailResponse>(app.get(url).text)
         val movie = data.movie ?: throw ErrorLoadingException("Không tải được phim")
-
-        val genres = movie.category?.values
-            ?.filter { it.group?.name == "Thể loại" }
-            ?.flatMap { it.list ?: emptyList() }?.map { it.name }
-        val year = movie.category?.values
-            ?.filter { it.group?.name == "Năm" }
-            ?.flatMap { it.list ?: emptyList() }
-            ?.firstOrNull()?.name?.toIntOrNull()
         val actors = movie.casts?.split(",")?.map { ActorData(Actor(it.trim())) }
-        val isMovie = movie.totalEpisodes == 1 ||
-                      movie.currentEpisode?.uppercase()?.contains("FULL") == true
+        val tags   = movie.category?.values?.flatMap { it.list?.map { c -> c.name } ?: emptyList() }
 
-        if (isMovie) {
-            val link = movie.episodes?.firstOrNull()?.items?.firstOrNull()
+        val isSingle = (movie.totalEpisodes ?: 0) <= 1
+
+        if (isSingle) {
+            val link = movie.episodes
+                ?.firstOrNull()?.items?.firstOrNull()
                 ?.let { it.m3u8?.ifEmpty { null } ?: it.embed } ?: ""
             return newMovieLoadResponse(movie.name, url, TvType.Movie, link) {
                 posterUrl   = movie.posterUrl ?: movie.thumbUrl
-                plot        = movie.description?.stripHtml()
-                this.year   = year
-                tags        = genres
+                plot        = movie.description?.replace(Regex("<[^>]*>"), "")
+                this.year   = null
+                this.tags   = tags
                 this.actors = actors
             }
-        }
-
-        val episodes = movie.episodes?.flatMap { server ->
-            server.items.mapIndexed { idx, ep ->
-                Episode(
-                    data        = ep.m3u8?.ifEmpty { null } ?: ep.embed ?: "",
-                    name        = "Tập ${ep.name}",
-                    episode     = ep.name.toIntOrNull() ?: (idx + 1),
-                    description = server.serverName
-                )
+        } else {
+            val episodes = movie.episodes?.flatMap { server ->
+                server.items.mapIndexed { idx, ep ->
+                    newEpisode(ep.m3u8?.ifEmpty { null } ?: ep.embed ?: "") {
+                        name    = ep.name
+                        episode = idx + 1
+                    }
+                }
+            } ?: emptyList()
+            return newTvSeriesLoadResponse(movie.name, url, TvType.TvSeries, episodes) {
+                posterUrl   = movie.posterUrl ?: movie.thumbUrl
+                plot        = movie.description?.replace(Regex("<[^>]*>"), "")
+                this.year   = null
+                this.tags   = tags
+                this.actors = actors
             }
-        } ?: emptyList()
-
-        return newTvSeriesLoadResponse(movie.name, url, TvType.TvSeries, episodes) {
-            posterUrl   = movie.posterUrl ?: movie.thumbUrl
-            plot        = movie.description?.stripHtml()
-            this.year   = year
-            tags        = genres
-            this.actors = actors
         }
     }
 
     override suspend fun loadLinks(
-        data: String, isCasting: Boolean,
+        data: String,
+        isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        if (data.isBlank()) return false
-        return if (data.contains(".m3u8")) {
-            callback(ExtractorLink(name, "$name HLS", data, mainUrl, Qualities.Unknown.value, true))
-            true
+        if (data.contains(".m3u8")) {
+            callback(
+                newExtractorLink(name, name, data) {
+                    this.referer = mainUrl
+                    this.quality = Qualities.Unknown.value
+                    this.isM3u8  = true
+                }
+            )
         } else {
             loadExtractor(data, mainUrl, subtitleCallback, callback)
-            true
         }
-    }
-
-    private fun MovieItem.toSearchResponse(): SearchResponse {
-        val isMovie = totalEpisodes == 1 ||
-                      currentEpisode?.uppercase()?.contains("FULL") == true
-        return newMovieSearchResponse(
-            name = name,
-            url  = "$mainUrl/api/film/$slug",
-            type = if (isMovie) TvType.Movie else TvType.TvSeries
-        ) { posterUrl = this@toSearchResponse.posterUrl ?: thumbUrl }
+        return true
     }
 }
