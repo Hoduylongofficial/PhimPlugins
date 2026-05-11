@@ -18,6 +18,16 @@ buildscript {
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0")
     }
 }
+// ⚠️ Sửa 2 dòng này thành thông tin GitHub của bạn
+tasks.register("makePlugins") {
+    dependsOn(
+        ":OPhimProvider:make",
+        ":KKPhimProvider:make",
+        ":NguonCProvider:make"
+    )
+}
+
+
 
 allprojects {
     repositories {
